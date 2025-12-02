@@ -1,0 +1,398 @@
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+
+<body style="background: white"></body>
+<script src="https://algorithmicmusic.online/js/libs/nn.min.js"></script>
+<script src="https://unpkg.com/tone"></script>
+<script src="https://algorithmicmusic.online/js/viz-helpers.js"></script>
+<script>
+
+//Face API Stuff
+  console.log(faceapi.nets)
+
+  let video, canvas
+  let currentMood = 'neutral' 
+  let lastAppliedMood = 'neutral'
+  let pendingMood = 'neutral'
+  let pendingMoodSince = 0
+    window.addEventListener('click', async () => {
+  await Tone.start()
+  console.log('Tone.js audio context started')
+  if (Tone.Transport.state !== 'started') {
+      Tone.Transport.start()
+    }
+  },
+  { once: true }
+)
+  async function videoSetup () {
+    // webcam video
+    video = nn.create('video')
+      .addTo('body')
+      .position(0, 0)
+      .set({
+        autoplay: true,
+        muted: true,
+        stream: await nn.askFor({ video: true })
+      })
+    // overlay canvas
+    canvas = nn.create('canvas')
+      .addTo('body')
+      .position(0, 0)
+    canvas.width = 640
+    canvas.height = 480
+    await loadModels()
+    detect()
+  }
+  async function loadModels() {
+    await faceapi.nets.tinyFaceDetector.loadFromUri('weights')
+    await faceapi.nets.faceLandmark68Net.loadFromUri('weights')
+    await faceapi.nets.faceRecognitionNet.loadFromUri('weights')
+    await faceapi.nets.faceExpressionNet.loadFromUri('weights')
+  }
+  async function detect() {
+    requestAnimationFrame(detect)
+    const result = await faceapi
+      .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+      .withFaceExpressions()
+    canvas.clear()
+    if (!result) return
+    const box = result.detection.box
+    const x = box.x
+    const y = box.y
+    const w = box.width
+    const h = box.height
+    canvas.strokeStyle = 'red'
+    canvas.strokeRect(x, y, w, h)
+
+    //Mood Identification
+    function expressionToMood(bestExpression) {
+    const { expression, probability } = bestExpression
+
+    //If it's unsure, treat as neutral
+    if (probability < 0.6) return 'neutral'
+    switch (expression) {
+        case 'happy':
+        case 'surprised':
+        return 'happy'
+        case 'sad':
+        return 'sad'
+        case 'angry':
+        case 'disgusted':
+        case 'fearful':
+        return 'mad'
+        default:
+        return 'neutral'
+    }
+    }
+    const bestExpression = result.expressions.asSortedArray()[0]
+    const newMood = expressionToMood(bestExpression)
+    const now = performance.now()
+    if (newMood !== pendingMood) {
+    pendingMood = newMood
+    pendingMoodSince = now
+}
+    // Only apply the mood if it's been stable for at least 1000ms
+    const STABLE_MS = 1000
+    if (
+   pendingMood !== lastAppliedMood &&                 
+   (now - pendingMoodSince) >= STABLE_MS              
+) {
+  currentMood = pendingMood
+  console.log('Mood changed to (debounced):', currentMood)
+  updateMusic(currentMood)
+}
+    canvas.fillStyle = 'red'
+    canvas.font = '20px sans-serif'
+    canvas.fillText(
+      `${bestExpression.expression} ${(bestExpression.probability * 100).toFixed(1)}%`,
+      x,
+      y - 10
+    )
+    console.log(bestExpression)
+  }
+  nn.on('load', videoSetup)
+
+//General
+const keyList = { value: 'C' }          
+const modeList = { value: 'ionian' }    
+const chordShapeList = { value: 'triad' }
+
+// Helper: get the full scale across 3 octaves
+function getScale () {
+  return [
+    ...nn.createScale(keyList.value + 3, modeList.value), 
+    ...nn.createScale(keyList.value + 4, modeList.value), 
+    ...nn.createScale(keyList.value + 5, modeList.value)  
+  ]
+}
+// Helper: drop or raise note(s) an octave
+function lowerOctave (note, amount = 1) {
+  const name = note.slice(0, -1)              
+  const octave = parseInt(note.slice(-1), 10) 
+  return name + (octave - amount)
+}
+function raiseOctave(note, amount = 1) {
+  const name = note.slice(0, -1);
+  const octave = parseInt(note.slice(-1), 10);
+  return name + (octave + amount);
+}
+function pickRandom(array) {
+  return array[Math.floor(Math.random() * array.length)];
+}
+//Drums
+const drumRoot = "DrumKit/Fresh's Metro Boomin (Off The Rip) Drum Kit/";
+//Drums Subfolders
+const kickFolder  = drumRoot + "Kicks/";
+const snareFolder = drumRoot + "Snares/";     
+const hatFolder   = drumRoot + "ClosedHats/";
+const kickFiles = [
+  "[PBS] Metro Honest Kick.wav",
+  "[ACD] Rack Kick.wav",
+  "Bad Guy Kick.wav",
+  "[Metro Boomin Kick].wav",
+  "Metrokik.wav"
+]
+const snareFiles = [
+  "(SXJ) Snare (5).wav",
+  "[AP] Snare ( Metro ).wav",
+  "[snare] (15) metro.wav",
+  "BIG WJITE CLAP & SNARE (25).wav",
+  "pbs - metro echo [ Snare ].wav"
+]
+const hatFiles = [
+  "Metro Hi Hat.wav",
+  "BWB WAV 7 HAT ROLL (15).wav",
+  "Boomin - Hat Closer 12.wav",
+  "Classic Wonda Hi Hat.wav",
+  "Metro Hats [Shake].wav"
+]
+let drumset; 
+// Create new drum Players using random samples
+function createDrumset() {
+  const kick  = pickRandom(kickFiles);
+  const snare = pickRandom(snareFiles);
+  const hat   = pickRandom(hatFiles);
+  console.log("Loaded samples:", { kick, snare, hat });
+  drumset = new Tone.Players({
+    kick:  kickFolder  + kick,
+    snare: snareFolder + snare,
+    hihat: hatFolder   + hat
+  }).toDestination();
+}
+let pattern = {
+  kick:  [[0.2, 0.2, 0.2, 0.2]],
+  snare: [[0.2, 0.2, 0.2, 0.2]],
+  hihat: [[0.8, 0.8, 0.8, 0.8]]
+}
+function randomizeDrums () {
+  pattern.kick[0]  = nn.times(4, () => nn.random())
+  pattern.snare[0] = nn.times(4, () => nn.random())
+  pattern.hihat[0] = nn.times(4, () => nn.random())
+  console.log('New drum pattern:', pattern, 'BPM:', Tone.Transport.bpm.value)
+}
+function playDrums (time) {
+  if (currentMood === 'neutral') return
+  const parts = Tone.Transport.position.split(':').map(Number)
+  const beat = parts[1]
+  for (const drum in pattern) {
+    const val = pattern[drum][0][beat]
+    const chance = nn.random() < val
+    if (chance) drumset.player(drum).start(time)
+  }
+}
+createDrumset(); 
+randomizeDrums();   
+new Tone.Loop(playDrums, '4n').start(0);
+
+//Bass
+const bass = new Tone.MonoSynth({
+  oscillator: { type: 'square' },
+  filter: { type: 'lowpass', frequency: 800 },
+  envelope: { attack: 0.01, decay: 0.2, sustain: 0.4, release: 0.8 },
+  volume: 4
+}).toDestination()
+function playBass (time) {
+  if (currentMood === 'neutral') return;
+  const [bar, beat] = Tone.Transport.position.split(':').map(Number);
+  if (beat !== 0) return;
+  const scale = getScale();
+  const chordDeg = currentProgression[bar % currentProgression.length];
+  const bassDegreeMap = {
+    1: 1,
+    5: 1,
+    6: 3,
+    4: 5,
+    7: 5,
+    2: 4,
+    3: 5
+  };
+  const bassDeg = bassDegreeMap[chordDeg] || chordDeg;
+  const rscale = nn.rotateScale(scale, bassDeg - 1);
+  const bassRoot = rscale[0];          
+  const bassNote = lowerOctave(bassRoot, 2);
+  console.log('Bass firing:', { bar, beat, chordDeg, bassDeg, bassRoot, bassNote });
+  bass.triggerAttackRelease(bassNote, '1n', time);
+}
+new Tone.Loop(playBass, '4n').start(0)
+
+//Melody
+const melodySynth = new Tone.Synth({
+  oscillator: { type: 'sine' },
+  envelope: { attack: 0.01, decay: 0.2, sustain: 0.2, release: 0.3 }
+}).toDestination()
+function playMelody(time) {
+  if (currentMood === 'neutral') return;
+  const scale = getScale();
+  const note = pickRandom(scale);
+  const highNote = raiseOctave(note, 1);
+  console.log("Melody firing:", highNote);
+  melodySynth.triggerAttackRelease(highNote, "8n", time);
+}
+new Tone.Loop(playMelody, "8n").start(0);
+
+//Chords
+const synth = new Tone.PolySynth().toDestination()
+let chord
+let scale
+Tone.Transport.loop = true
+Tone.Transport.timeSignature = 4
+Tone.Transport.loopEnd = '8m'
+const happyProgressions = [
+  [1, 5, 6, 4, 1, 5, 6, 4], 
+  [1, 4, 5, 4, 1, 4, 5, 4], 
+  [6, 4, 1, 5, 6, 4, 1, 5] 
+]
+const sadProgressions = [
+  [6, 4, 1, 5, 6, 4, 1, 5],
+  [6, 1, 6, 4, 6, 1, 6, 4], 
+  [4, 6, 5, 1, 4, 6, 5, 1] 
+]
+const evilProgressions = [
+  [1, 7, 6, 5, 4, 3, 2, 1],
+  [1, 7, 1, 6, 5, 4, 3, 2], 
+  [1, 2, 1, 7, 6, 5, 2, 1]
+]
+let currentProgression = happyProgressions[0]
+function playChords (time) {
+  if (currentMood === 'neutral') return
+  const [bar, beat] = Tone.Transport.position.split(':').map(Number)
+  const scale = getScale()
+  if (beat === 0) {
+    const deg = currentProgression[bar % currentProgression.length]
+    const rscale = nn.rotateScale(scale, deg - 1)
+    const shape = chordShapeList.value || 'triad'
+    chord = nn.createChord(rscale, shape)
+    console.log('Chord firing:', { bar, beat, deg, chord })
+    synth.triggerAttackRelease(chord, '1n', time)
+  }
+}
+new Tone.Loop(playChords, '4n').start(0)
+
+//Mood Functions:
+
+//Happy Mood
+function happy(){
+  currentProgression = pickRandom(happyProgressions)
+  keyList.value = 'C'          
+  modeList.value = 'ionian'    
+  chordShapeList.value = 'triad'
+  if (synth.set) {
+    synth.set({ oscillator: { type: "sawtooth" } })
+  }
+  Tone.Transport.bpm.value = nn.randomInt(110, 140)
+  const filter = new Tone.Filter(5000, "lowpass")
+  const chorus = new Tone.Chorus(3, 1.8, 0.5).start()
+  const reverb = new Tone.Reverb({ decay: 1.8, wet: 0.25 })
+  const delay = new Tone.FeedbackDelay("8n", 0.1)
+  synth.disconnect();
+  synth.connect(filter);
+  melodySynth.disconnect();
+  melodySynth.connect(filter);
+  filter.connect(chorus)
+  chorus.connect(delay)
+  delay.connect(reverb)
+  reverb.toDestination()
+}
+
+//Sad Mood
+function sad(){
+  currentProgression = pickRandom(sadProgressions)
+  keyList.value = 'A'
+  modeList.value = 'aeolian'   
+  chordShapeList.value = 'triad'
+  if (synth.set) {
+    synth.set({ oscillator: { type: "triangle" } }) 
+  }
+  Tone.Transport.bpm.value = nn.randomInt(60, 90)
+  const filter = new Tone.Filter(2500, "lowpass")
+  const chorus = new Tone.Chorus(1.2, 2.5, 0.25).start()
+  const delay = new Tone.FeedbackDelay("8n", 0.25)
+  const reverb = new Tone.Reverb({ decay: 2.8, wet: 0.35 })
+  synth.disconnect()
+  melodySynth.disconnect()
+  synth.connect(filter)
+  melodySynth.connect(filter)
+  filter.connect(chorus)
+  chorus.connect(delay)
+  delay.connect(reverb)
+  reverb.toDestination()
+}
+
+//Evil Mood
+function evil() {
+  currentProgression = pickRandom(evilProgressions)
+  keyList.value = 'E'
+  modeList.value = 'phrygian'
+  chordShapeList.value = 'triad'
+  if (synth.set) {
+    synth.set({ oscillator: { type: "sine" } })
+  }
+  melodySynth.oscillator.type = "sine"               
+  Tone.Transport.bpm.value = nn.randomInt(80,120)
+  const pitchShift = new Tone.PitchShift(-2)
+  const filter = new Tone.Filter(1800, "lowpass")
+  const distortion = new Tone.Distortion(0.25)
+  const reverb = new Tone.Reverb({ decay: 3, wet: 0.4 })
+  synth.disconnect()
+  melodySynth.disconnect()
+  synth.connect(pitchShift)
+  melodySynth.connect(pitchShift)
+  pitchShift.connect(filter)
+  filter.connect(distortion)
+  distortion.connect(reverb)
+  reverb.toDestination()
+}
+
+//Updating Music From Mood
+function updateMusic(mood) {
+  if (mood === 'neutral') {
+    document.body.style.background = 'white'
+    lastAppliedMood = mood
+    return
+  }
+  // Hard reset musical timeline so BPM and progressions restart cleanly
+  Tone.Transport.position = '0:0:0'
+  // New drum kit + pattern on every mood change
+  createDrumset()
+  randomizeDrums()
+  if (mood === 'happy') {
+    document.body.style.background = 'linear-gradient(to right, orange, yellow)'
+    happy()
+  } else if (mood === 'sad') {
+    document.body.style.background = 'linear-gradient(to right, blue, purple)'
+    sad()
+  } else if (mood === 'mad') {
+    document.body.style.background = 'linear-gradient(to right, red, black)'
+    evil()
+  }
+  console.log('Applied mood:', mood, 'BPM:', Tone.Transport.bpm.value)
+  lastAppliedMood = mood
+}
+
+//UI
+const startMessage = nn.create('div')
+  .content('Click anywhere to get started! Look into the camera making either a happy, sad, or angry/disgusted facial expression.')
+  .addTo('body')
+  .set({
+    style: 'font-size: 20px; color: black;'
+  });
+</script>
